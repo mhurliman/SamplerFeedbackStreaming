@@ -132,6 +132,7 @@ void Streaming::DataUploader::LoadTextureFromMemory(Streaming::UpdateList& out_u
 //-----------------------------------------------------------------------------
 void Streaming::DataUploader::SubmitTextureLoadsFromMemory()
 {
+    PIXScopedEvent(PixColor::Upload, "DS: Submit Packed Mips");
     m_memoryQueue->EnqueueSignal(m_memoryFence.Get(), m_memoryFenceValue);
     m_memoryQueue->Submit();
     m_memoryFenceValue++;
@@ -206,6 +207,9 @@ void Streaming::DataUploader::StartThreads()
 
     Streaming::SetThreadPriority(m_submitThread, m_threadPriority);
     Streaming::SetThreadPriority(m_fenceMonitorThread, m_threadPriority);
+
+    Streaming::SetThreadName(m_submitThread, L"SFS Submit (UpdateTileMappings)");
+    Streaming::SetThreadName(m_fenceMonitorThread, L"SFS FenceMonitor");
 }
 
 void Streaming::DataUploader::StopThreads()
@@ -369,6 +373,7 @@ void Streaming::DataUploader::FenceMonitorThread()
             // wait for mapping complete before streaming packed tiles
             if (m_mappingFence->GetCompletedValue() >= updateList.m_mappingFenceValue)
             {
+                PIXScopedEvent(PixColor::Upload, "DS: Enqueue Packed Mips");
                 LoadTextureFromMemory(updateList);
 
                 loadPackedMips = true; // set flag to signal fence
@@ -404,6 +409,9 @@ void Streaming::DataUploader::FenceMonitorThread()
         case UpdateList::State::STATE_MAP_PENDING:
             if (updateList.m_mappingFenceValue <= m_mappingFence->GetCompletedValue())
             {
+                PIXScopedEvent(PixColor::Residency, "SFS: Notify Complete (%u uploads, %u evictions)",
+                    updateList.GetNumStandardUpdates(), updateList.GetNumEvictions());
+
                 // notify evictions
                 if (updateList.GetNumEvictions())
                 {
@@ -457,6 +465,13 @@ void Streaming::DataUploader::FenceMonitorThread()
 //-----------------------------------------------------------------------------
 void Streaming::DataUploader::SubmitThread()
 {
+    // the thread wakes for each submit. skip the PIX event if there is nothing to do.
+    if (0 == m_submitTaskAlloc.GetReadyToRead())
+    {
+        return;
+    }
+    PIXScopedEvent(PixColor::Mapping, "SFS: Submit Tile Mappings");
+
     bool signalMap = false;
 
     // look through tasks

@@ -1124,14 +1124,18 @@ UINT Scene::DetermineMaxNumFeedbackResolves()
 typedef std::pair<SceneObjects::BaseObject*, UINT> ObjectIndexPair;
 typedef std::vector<ObjectIndexPair> ObjectSet;
 
-void DrawObjectSets(const std::vector<ObjectSet>& in_objectSets, SceneObjects::DrawParams& in_params,
+void DrawObjectSets(const std::vector<ObjectSet>& in_objectSets, const char* const* in_setNames,
+    SceneObjects::DrawParams& in_params,
     const D3D12_GPU_DESCRIPTOR_HANDLE in_descriptorBase, UINT in_descriptorSize,
     ID3D12GraphicsCommandList1* out_pCommandList)
 {
-    for (auto& t : in_objectSets)
+    for (UINT setIndex = 0; setIndex < (UINT)in_objectSets.size(); setIndex++)
     {
+        auto& t = in_objectSets[setIndex];
         if (t.size())
         {
+            PIXScopedEvent(out_pCommandList, PIX_COLOR_INDEX(UINT8(10 + setIndex)), "%s (%u objects)", in_setNames[setIndex], (UINT)t.size());
+
             t[0].first->SetCommonPipelineState(out_pCommandList, in_params); // these objects all share pipeline state
             for (auto& o : t)
             {
@@ -1175,6 +1179,10 @@ void Scene::DrawObjects()
         Planet,
         NumMaterials
     };
+
+    // names for PIX events, one per MaterialType
+    static const char* const materialNames[] = { "Sky", "Planets with Sampler Feedback", "Planets" };
+    static_assert(_countof(materialNames) == (UINT)MaterialType::NumMaterials, "need a name for each MaterialType");
 
     std::vector<ObjectSet> objectSets((UINT)MaterialType::NumMaterials);
 
@@ -1244,13 +1252,16 @@ void Scene::DrawObjects()
         m_prevNumFeedbackObjects[m_frameIndex] = numFeedbackObjects;
     }
 
-    DrawObjectSets(objectSets, drawParams, srvBaseGPU, m_srvUavCbvDescriptorSize, m_commandList.Get());
+    PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "Draw Objects");
+    DrawObjectSets(objectSets, materialNames, drawParams, srvBaseGPU, m_srvUavCbvDescriptorSize, m_commandList.Get());
 }
 
 //-------------------------------------------------------------------------
 //-------------------------------------------------------------------------
 void Scene::MsaaResolve()
 {
+    PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "MSAA Resolve");
+
     ID3D12Resource* pRenderTarget = m_renderTargets[m_frameIndex].Get();
 
     D3D12_RESOURCE_BARRIER barriers[] = {
@@ -1515,8 +1526,11 @@ void Scene::StartScene()
 
     m_commandList->OMSetRenderTargets(1, &rtvHandle, TRUE, &dsvHandle);
 
-    m_commandList->ClearRenderTargetView(rtvHandle, m_clearColor, 0, nullptr);
-    m_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    {
+        PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "Clear");
+        m_commandList->ClearRenderTargetView(rtvHandle, m_clearColor, 0, nullptr);
+        m_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    }
 
     m_commandList->RSSetViewports(1, &m_viewport);
     m_commandList->RSSetScissorRects(1, &m_scissorRect);
@@ -1540,11 +1554,14 @@ void Scene::StartScene()
 //-------------------------------------------------------------------------
 void Scene::DrawUI()
 {
+    PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "UI");
+
     //-------------------------------------------
     // Display various textures
     //-------------------------------------------
     if (m_args.m_showFeedbackMaps && (nullptr != m_pTerrainSceneObject))
     {
+        PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "Feedback & Residency Map Viewers");
         CreateTerrainViewers();
 
         const float minDim = std::min(m_viewport.Height, m_viewport.Width) / 5;
@@ -1633,6 +1650,7 @@ void Scene::DrawUI()
         guiDrawParams.m_totalHeapSize = m_args.m_streamingHeapSize * (UINT)m_sharedHeaps.size();
         guiDrawParams.m_windowHeight = m_args.m_windowHeight;
 
+        PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "ImGui");
         if (m_args.m_uiModeMini)
         {
             m_pGui->DrawMini(m_commandList.Get(), guiDrawParams);
@@ -1739,6 +1757,8 @@ bool Scene::WaitForAssetLoad()
     {
         if (!o->GetPackedMipsPresent())
         {
+            PIXScopedEvent(PIX_COLOR_DEFAULT, "Wait For Asset Load (packed mips)");
+
             // must give TileUpdateManager a chance to process packed mip requests
             D3D12_CPU_DESCRIPTOR_HANDLE minmipmapDescriptor = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_srvHeap->GetCPUDescriptorHandleForHeapStart(), (UINT)DescriptorHeapOffsets::SHARED_MIN_MIP_MAP, m_srvUavCbvDescriptorSize);
             m_pTileUpdateManager->BeginFrame(m_srvHeap.Get(), minmipmapDescriptor);
@@ -1763,14 +1783,20 @@ bool Scene::Draw()
         return false;
     }
 
-    HandleUIchanges(); // handle UI changes (outside of begin/end frame)
+    PIXScopedEvent(PIX_COLOR_DEFAULT, "Frame %u", m_frameNumber);
 
-    // handle any changes to window dimensions or enter/exit full screen
-    Resize();
+    {
+        PIXScopedEvent(PIX_COLOR_DEFAULT, "Update Scene (UI, resize, load objects)");
 
-    // load more spheres?
-    // SceneResource destruction/creation must be done outside of BeginFrame/EndFrame
-    LoadSpheres();
+        HandleUIchanges(); // handle UI changes (outside of begin/end frame)
+
+        // handle any changes to window dimensions or enter/exit full screen
+        Resize();
+
+        // load more spheres?
+        // SceneResource destruction/creation must be done outside of BeginFrame/EndFrame
+        LoadSpheres();
+    }
 
     // after loading new objects
     if (m_args.m_waitForAssetLoad && WaitForAssetLoad())
@@ -1794,12 +1820,17 @@ bool Scene::Draw()
     D3D12_CPU_DESCRIPTOR_HANDLE minmipmapDescriptor = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_srvHeap->GetCPUDescriptorHandleForHeapStart(), (UINT)DescriptorHeapOffsets::SHARED_MIN_MIP_MAP, m_srvUavCbvDescriptorSize);
     m_pTileUpdateManager->BeginFrame(m_srvHeap.Get(), minmipmapDescriptor);
 
-    Animate();
+    {
+        PIXScopedEvent(PIX_COLOR_DEFAULT, "Animate");
+        Animate();
+    }
 
     //-------------------------------------------
     // draw everything
     //-------------------------------------------
     {
+        PIXScopedEvent(PIX_COLOR_DEFAULT, "Record Scene Commands");
+        PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "Scene");
         GpuScopeTimer gpuScopeTimer(m_pGpuTimer, m_commandList.Get(), "GPU Frame Time");
 
         // set RTV, DSV, descriptor heap, etc.
@@ -1810,6 +1841,7 @@ bool Scene::Draw()
 
         if (m_args.m_visualizeFrustum)
         {
+            PIXScopedEvent(m_commandList.Get(), PIX_COLOR_DEFAULT, "Frustum Visualization");
             XMMATRIX combinedTransform = XMMatrixMultiply(m_viewMatrix, m_projection);
             m_pFrustumViewer->Draw(m_commandList.Get(), combinedTransform, m_fieldOfView, m_aspectRatio);
         }
@@ -1837,7 +1869,10 @@ bool Scene::Draw()
     m_renderThreadTimes.Set(RenderEvents::TumEndFrame);
 
     ID3D12CommandList* pCommandLists[] = { commandLists.m_beforeDrawCommands, m_commandList.Get(), commandLists.m_afterDrawCommands };
-    m_commandQueue->ExecuteCommandLists(_countof(pCommandLists), pCommandLists);
+    {
+        PIXScopedEvent(PIX_COLOR_DEFAULT, "ExecuteCommandLists");
+        m_commandQueue->ExecuteCommandLists(_countof(pCommandLists), pCommandLists);
+    }
 
     //-------------------------------------------
     // Present the frame
@@ -1848,7 +1883,11 @@ bool Scene::Draw()
     {
         presentFlags = DXGI_PRESENT_ALLOW_TEARING;
     }
-    bool success = IsDeviceOk(m_swapChain->Present(syncInterval, presentFlags));
+    bool success = false;
+    {
+        PIXScopedEvent(PIX_COLOR_DEFAULT, "Present");
+        success = IsDeviceOk(m_swapChain->Present(syncInterval, presentFlags));
+    }
 
     //-------------------------------------------
     // gather statistics before moving to next frame
@@ -1856,7 +1895,10 @@ bool Scene::Draw()
     GatherStatistics();
     m_renderThreadTimes.Set(RenderEvents::WaitOnFencesBegin);
 
-    MoveToNextFrame();
+    {
+        PIXScopedEvent(PIX_COLOR_DEFAULT, "Wait For Frame Fence");
+        MoveToNextFrame();
+    }
 
     m_renderThreadTimes.Set(RenderEvents::FrameEnd);
     m_renderThreadTimes.NextFrame();

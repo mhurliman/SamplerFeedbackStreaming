@@ -178,6 +178,8 @@ void Streaming::TileUpdateManagerBase::BeginFrame(ID3D12DescriptorHeap* in_pDesc
     ASSERT(!GetWithinFrame());
     m_withinFrame = true;
 
+    PIXScopedEvent(PixColor::Feedback, "SFS: BeginFrame");
+
     StartThreads();
 
     m_processFeedbackFlag.Set();
@@ -205,6 +207,10 @@ void Streaming::TileUpdateManagerBase::BeginFrame(ID3D12DescriptorHeap* in_pDesc
     ID3D12DescriptorHeap* ppHeaps[] = { in_pDescriptorHeap };
     GetCommandList(CommandListName::Before)->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
 
+    // QueueFeedback() records feedback clears into the "before" command list while the scene is drawn.
+    // group them under one GPU event, which is closed in EndFrame()
+    PIXBeginEvent(GetCommandList(CommandListName::Before), PixColor::Feedback, "SFS: Clear Sampler Feedback");
+
     // capture cpu time spent processing feedback
     {
         INT64 processFeedbackTime = m_processFeedbackTime; // snapshot of total time spent
@@ -222,6 +228,11 @@ TileUpdateManager::CommandLists Streaming::TileUpdateManagerBase::EndFrame()
 {
     ASSERT(GetWithinFrame());
     // NOTE: we are "within frame" until the end of EndFrame()
+
+    PIXScopedEvent(PixColor::Feedback, "SFS: EndFrame");
+
+    // close the feedback clear event opened in BeginFrame()
+    PIXEndEvent(GetCommandList(CommandListName::Before));
 
     // transition packed mips if necessary
     // FIXME? if any 1 needs a transition, go ahead and check all of them. not worth optimizing.
@@ -250,6 +261,7 @@ TileUpdateManager::CommandLists Streaming::TileUpdateManagerBase::EndFrame()
     //------------------------------------------------------------------
     {
         auto pCommandList = GetCommandList(CommandListName::Before);
+        PIXScopedEvent(pCommandList, PixColor::Mapping, "SFS: Pre-Draw Barriers");
 
         /*
         * Aliasing barriers are unnecessary, as draw commands only access modified resources after a fence has signaled on the copy queue
@@ -286,8 +298,8 @@ TileUpdateManager::CommandLists Streaming::TileUpdateManagerBase::EndFrame()
         std::swap(residencyBarrier.Transition.StateBefore, residencyBarrier.Transition.StateAfter);
         pCommandList->ResourceBarrier(1, &residencyBarrier);
 #endif
-        pCommandList->Close();
     }
+    GetCommandList(CommandListName::Before)->Close();
 
     //------------------------------------------------------------------
     // after draw calls,
@@ -298,6 +310,7 @@ TileUpdateManager::CommandLists Streaming::TileUpdateManagerBase::EndFrame()
 
         if (m_feedbackReadbacks.size())
         {
+            PIXScopedEvent(pCommandList, PixColor::Feedback, "SFS: Resolve Sampler Feedback (%u resources)", (UINT)m_feedbackReadbacks.size());
             m_gpuTimerResolve.BeginTimer(pCommandList, m_renderFrameIndex);
 
             // transition all feedback resources UAV->RESOLVE_SOURCE
@@ -319,9 +332,12 @@ TileUpdateManager::CommandLists Streaming::TileUpdateManagerBase::EndFrame()
             m_gpuTimerResolve.EndTimer(pCommandList, m_renderFrameIndex);
 #if RESOLVE_TO_TEXTURE
             // copy readable feedback buffers to cpu
-            for (auto& t : m_feedbackReadbacks)
             {
-                t.m_pStreamingResource->ReadbackFeedback(pCommandList);
+                PIXScopedEvent(pCommandList, PixColor::Feedback, "SFS: Readback Sampler Feedback");
+                for (auto& t : m_feedbackReadbacks)
+                {
+                    t.m_pStreamingResource->ReadbackFeedback(pCommandList);
+                }
             }
 #endif
             m_feedbackReadbacks.clear();

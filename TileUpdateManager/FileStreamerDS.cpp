@@ -82,6 +82,8 @@ void Streaming::FileStreamerDS::StreamTexture(Streaming::UpdateList& in_updateLi
 {
     ASSERT(in_updateList.GetNumStandardUpdates());
 
+    PIXScopedEvent(PixColor::Upload, "DS: Enqueue %u Tile Requests", in_updateList.GetNumStandardUpdates());
+
     auto pTextureFileInfo = in_updateList.m_pStreamingResource->GetTextureFileInfo();
     DXGI_FORMAT textureFormat = pTextureFileInfo->GetFormat();
     auto pDstHeap = in_updateList.m_pStreamingResource->GetHeap();
@@ -153,6 +155,8 @@ void Streaming::FileStreamerDS::StreamTexture(Streaming::UpdateList& in_updateLi
 //-----------------------------------------------------------------------------
 void Streaming::FileStreamerDS::Signal()
 {
+    PIXScopedEvent(PixColor::Upload, "DS: Submit");
+
     if (VisualizationMode::DATA_VIZ_NONE == m_visualizationMode)
     {
         m_fileQueue->EnqueueSignal(m_copyFence.Get(), m_copyFenceValue);

@@ -39,6 +39,8 @@ void Streaming::StreamingResourceDU::MapPackedMips(ID3D12CommandQueue* in_pComma
     // mapping packed mips is different from regular tiles: must be mapped before we can use copytextureregion() instead of copytiles()
     UINT numTiles = GetPackedMipInfo().NumTilesForPackedMips;
 
+    PIXScopedEvent(in_pCommandQueue, PixColor::Mapping, "SFS: Map Packed Mips (%u tiles)", numTiles);
+
     std::vector<D3D12_TILE_RANGE_FLAGS> rangeFlags(numTiles, D3D12_TILE_RANGE_FLAG_NONE);
 
     // if the number of standard (not packed) mips is n, then start updating at subresource n

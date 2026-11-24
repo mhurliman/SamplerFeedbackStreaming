@@ -84,6 +84,7 @@ Streaming::FileStreamerReference::FileStreamerReference(ID3D12Device* in_pDevice
             }
             DebugPrint(L"Destroyed Copy Thread\n");
         });
+    Streaming::SetThreadName(m_copyThread, L"SFS Reference Copy");
 }
 
 Streaming::FileStreamerReference::~FileStreamerReference()
@@ -182,6 +183,8 @@ void Streaming::FileStreamerReference::LoadTexture(Streaming::FileStreamerRefere
     UINT startIndex = in_copyBatch.m_numEvents;
     UINT endIndex = startIndex + in_numtilesToLoad;
 
+    PIXScopedEvent(PixColor::Upload, "Reference: Read %u Tiles", in_numtilesToLoad);
+
     if (VisualizationMode::DATA_VIZ_NONE == m_visualizationMode)
     {
         auto pTextureFileInfo = pUpdateList->m_pStreamingResource->GetTextureFileInfo();
@@ -258,6 +261,7 @@ void Streaming::FileStreamerReference::CopyTiles(ID3D12GraphicsCommandList* out_
 //-----------------------------------------------------------------------------
 void Streaming::FileStreamerReference::ExecuteCopyCommandList(ID3D12GraphicsCommandList* in_pCmdList)
 {
+    PIXScopedEvent(PixColor::Upload, "Reference: Execute Tile Copies");
     in_pCmdList->Close();
     ID3D12CommandList* pCmdLists[] = { in_pCmdList };
     m_copyCommandQueue->ExecuteCommandLists(1, pCmdLists);
@@ -319,6 +323,7 @@ void Streaming::FileStreamerReference::CopyThread()
 
                 // generate copy commands
                 // copy from we left of last time (copyEnd) until the last load that completed (lastSignaled)
+                PIXScopedEvent(m_copyCommandList.Get(), PixColor::Upload, "Reference: Copy %u Tiles", c.m_lastSignaled - c.m_copyEnd);
                 D3D12_TILE_REGION_SIZE tileRegionSize{ 1, FALSE, 0, 0, 0 };
                 DXGI_FORMAT textureFormat = c.m_pUpdateList->m_pStreamingResource->GetTextureFileInfo()->GetFormat();
                 for (UINT i = c.m_copyEnd; i < c.m_lastSignaled; i++)

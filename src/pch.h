@@ -55,6 +55,13 @@
 // DirectXTK12
 #include "d3dx12.h"
 
+// PIX event markers (WinPixEventRuntime)
+// pix3.h only enables markers in debug builds by default. enable them in all builds so release builds can be profiled.
+#ifndef USE_PIX
+#define USE_PIX
+#endif
+#include <pix3.h>
+
 // Imgui
 #include "imgui.h"
 #include "imgui_impl_win32.h"

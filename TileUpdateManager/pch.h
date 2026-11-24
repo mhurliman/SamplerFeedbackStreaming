@@ -49,3 +49,19 @@
 #include <filesystem>
 
 #include "d3dx12.h"
+
+// PIX event markers (WinPixEventRuntime)
+// pix3.h only enables markers in debug builds by default. enable them in all builds so release builds can be profiled.
+#ifndef USE_PIX
+#define USE_PIX
+#endif
+#include <pix3.h>
+
+// event colors used by the streaming library, so related work is easy to spot in PIX timelines
+namespace PixColor
+{
+    const UINT8 Feedback = PIX_COLOR_INDEX(1);  // sampler feedback clear/resolve/processing
+    const UINT8 Upload   = PIX_COLOR_INDEX(2);  // tile uploads: file reads, DirectStorage requests, copies
+    const UINT8 Mapping  = PIX_COLOR_INDEX(3);  // UpdateTileMappings() for reserved resources
+    const UINT8 Residency= PIX_COLOR_INDEX(4);  // residency map updates and completion notifications
+}

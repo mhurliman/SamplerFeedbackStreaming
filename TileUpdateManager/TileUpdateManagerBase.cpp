@@ -113,6 +113,7 @@ void Streaming::TileUpdateManagerBase::StartThreads()
             {
                 m_residencyChangedFlag.Wait();
 
+                PIXScopedEvent(PixColor::Residency, "SFS: Update Residency Maps");
                 for (auto p : m_streamingResources)
                 {
                     p->UpdateMinMipMap();
@@ -122,6 +123,9 @@ void Streaming::TileUpdateManagerBase::StartThreads()
 
     Streaming::SetThreadPriority(m_processFeedbackThread, m_threadPriority);
     Streaming::SetThreadPriority(m_updateResidencyThread, m_threadPriority);
+
+    Streaming::SetThreadName(m_processFeedbackThread, L"SFS ProcessFeedback");
+    Streaming::SetThreadName(m_updateResidencyThread, L"SFS UpdateResidency");
 }
 
 //-----------------------------------------------------------------------------
@@ -153,6 +157,7 @@ void Streaming::TileUpdateManagerBase::ProcessFeedbackThread()
         bool expected = true;
         if (m_havePackedMipsToLoad.compare_exchange_weak(expected, false))
         {
+            PIXScopedEvent(PixColor::Upload, "SFS: Load Packed Mips");
             for (auto p : m_streamingResources)
             {
                 if (!p->InitPackedMips())
@@ -178,6 +183,7 @@ void Streaming::TileUpdateManagerBase::ProcessFeedbackThread()
                 // flush any pending uploads from previous frame
                 if (uploadsRequested) { flushPendingUploadRequests = true; }
 
+                PIXScopedEvent(PixColor::Feedback, "SFS: Process Feedback (%u resources)", (UINT)m_streamingResources.size());
                 auto startTime = m_cpuTimer.GetTime();
                 for (UINT i = 0; i < m_streamingResources.size(); i++)
                 {
@@ -195,6 +201,11 @@ void Streaming::TileUpdateManagerBase::ProcessFeedbackThread()
 
         // push uploads and evictions for stale resources
         {
+            // this loop can spin while waiting for UpdateLists to become available.
+            // only emit a PIX event when uploads can be queued, to avoid flooding captures with empty events.
+            const bool canQueueUploads = staleResources.size() && m_dataUploader.GetNumUpdateListsAvailable();
+            if (canQueueUploads) { PIXBeginEvent(PixColor::Upload, "SFS: Queue Tiles (%u stale resources)", (UINT)staleResources.size()); }
+
             UINT numEvictions = 0;
             UINT newStaleSize = 0; // track number of stale resources, then resize the array to the updated number
             for (auto resourceIndex : staleResources)
@@ -228,6 +239,8 @@ void Streaming::TileUpdateManagerBase::ProcessFeedbackThread()
             }
             staleResources.resize(newStaleSize); // compact array
             if (numEvictions) { m_dataUploader.AddEvictions(numEvictions); }
+
+            if (canQueueUploads) { PIXEndEvent(); }
         }
 
         // if there are uploads, maybe signal depending on heuristic to minimize # signals
@@ -240,6 +253,7 @@ void Streaming::TileUpdateManagerBase::ProcessFeedbackThread()
                 // this minimum heuristic prevents "storms" of submits with too few tiles to sustain good throughput
                 ((0 == m_dataUploader.GetNumUpdateListsAvailable()) && (uploadsRequested > m_minNumUploadRequests)))
             {
+                PIXScopedEvent(PixColor::Upload, "SFS: Submit Uploads (%u tiles)", uploadsRequested);
                 SignalFileStreamer();
                 uploadsRequested = 0;
             }

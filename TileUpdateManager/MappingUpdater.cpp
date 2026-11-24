@@ -56,6 +56,9 @@ void Streaming::MappingUpdater::Map(ID3D12CommandQueue* in_pCommandQueue, ID3D12
     ASSERT(in_coords.size() == in_indices.size());
 
     UINT numTotal = (UINT)in_coords.size();
+
+    // event on the mapping queue: appears on the queue's GPU timeline in PIX
+    PIXScopedEvent(in_pCommandQueue, PixColor::Mapping, "SFS: Map %u Tiles", numTotal);
     while (numTotal)
     {
         UINT numRegions = std::min(numTotal, m_maxTileMappingUpdatesPerApiCall);
@@ -82,6 +85,9 @@ void Streaming::MappingUpdater::UnMap(ID3D12CommandQueue* in_pCommandQueue, ID3D
     const std::vector<D3D12_TILED_RESOURCE_COORDINATE>& in_coords)
 {
     UINT numTotal = (UINT)in_coords.size();
+
+    // event on the mapping queue: appears on the queue's GPU timeline in PIX
+    PIXScopedEvent(in_pCommandQueue, PixColor::Mapping, "SFS: Unmap %u Tiles", numTotal);
     while (numTotal)
     {
         UINT numRegions = std::min(numTotal, m_maxTileMappingUpdatesPerApiCall);

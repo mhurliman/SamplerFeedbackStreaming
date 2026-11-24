@@ -115,6 +115,12 @@ namespace Streaming
         }
     }
 
+    // name threads so they are easy to identify in PIX timing captures and debuggers
+    inline void SetThreadName(std::thread& in_thread, const wchar_t* in_name)
+    {
+        ::SetThreadDescription(in_thread.native_handle(), in_name);
+    }
+
     //==================================================
     // unused
     //==================================================
